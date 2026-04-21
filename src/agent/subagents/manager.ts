@@ -21,7 +21,10 @@ import {
   SYSTEM_REMINDER_OPEN,
 } from "../../constants";
 import { cliPermissions } from "../../permissions/cli";
-import { resolveAllowedMemoryRoots } from "../../permissions/memoryScope";
+import {
+  parseScopeList,
+  resolveAllowedMemoryRoots,
+} from "../../permissions/memoryScope";
 import { permissionMode } from "../../permissions/mode";
 import { sessionPermissions } from "../../permissions/session";
 import { settingsManager } from "../../settings-manager";
@@ -730,12 +733,17 @@ async function executeSubagent(
         delete childEnv.LETTA_MEMORY_DIR;
       }
 
-      const parentMemoryDir =
-        process.env.MEMORY_DIR || process.env.LETTA_MEMORY_DIR;
-      if (parentMemoryDir && parentMemoryDir.trim().length > 0) {
-        childEnv.PARENT_MEMORY_DIR = parentMemoryDir;
+      // Authorize the child to write the parent's memory via the
+      // cross-agent guard. Compose the scope transitively so that
+      // grandchildren also see the full ancestor chain.
+      const nextScope = new Set(parseScopeList(process.env.LETTA_MEMORY_SCOPE));
+      if (parentAgentId) {
+        nextScope.add(parentAgentId);
+      }
+      if (nextScope.size > 0) {
+        childEnv.LETTA_MEMORY_SCOPE = [...nextScope].join(",");
       } else {
-        delete childEnv.PARENT_MEMORY_DIR;
+        delete childEnv.LETTA_MEMORY_SCOPE;
       }
     }
 
