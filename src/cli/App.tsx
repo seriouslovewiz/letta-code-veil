@@ -256,6 +256,7 @@ import {
   buildInitMessage,
   gatherInitGitContext,
 } from "./helpers/initCommand";
+import { buildLogoutSuccessMessage } from "./helpers/logoutMessage";
 import {
   getReflectionSettings,
   parseMemoryPreference,
@@ -8931,7 +8932,7 @@ export default function App({
             await settingsManager.logout();
 
             cmd.finish(
-              "✓ Logged out successfully. Run 'letta' to re-authenticate.",
+              buildLogoutSuccessMessage(Boolean(process.env.LETTA_API_KEY)),
               true,
             );
 
