@@ -286,6 +286,7 @@ import {
   toQueuedMsg,
 } from "./helpers/queuedMessageParts";
 import { resolveReasoningTabToggleCommand } from "./helpers/reasoningTabToggle";
+import { isReflectionSubagentActive } from "./helpers/reflectionGate";
 import {
   appendTranscriptDeltaJsonl,
   buildAutoReflectionPayload,
@@ -320,6 +321,7 @@ import {
   getActiveBackgroundAgents,
   getSubagentByToolCallId,
   getSnapshot as getSubagentSnapshot,
+  getSubagents,
   hasActiveSubagents,
   interruptActiveSubagents,
   subscribe as subscribeToSubagents,
@@ -1074,13 +1076,11 @@ function formatReflectionSettings(settings: ReflectionSettings): string {
 
 const AUTO_REFLECTION_DESCRIPTION = "Reflect on recent conversations";
 
-function hasActiveReflectionSubagent(): boolean {
-  const snapshot = getSubagentSnapshot();
-  return snapshot.agents.some(
-    (agent) =>
-      agent.type.toLowerCase() === "reflection" &&
-      (agent.status === "pending" || agent.status === "running"),
-  );
+function hasActiveReflectionSubagent(
+  agentId: string,
+  conversationId: string,
+): boolean {
+  return isReflectionSubagentActive(getSubagents(), agentId, conversationId);
 }
 
 function buildTextParts(
@@ -10353,7 +10353,8 @@ export default function App({
             return { submitted: true };
           }
 
-          if (hasActiveReflectionSubagent()) {
+          const reflectConversationId = conversationIdRef.current ?? "default";
+          if (hasActiveReflectionSubagent(agentId, reflectConversationId)) {
             cmd.fail(
               "A reflection agent is already running in the background.",
             );
@@ -10850,7 +10851,9 @@ ${SYSTEM_REMINDER_CLOSE}
         if (!memfsEnabledForAgent) {
           return false;
         }
-        if (hasActiveReflectionSubagent()) {
+        const autoReflectConversationId =
+          conversationIdRef.current ?? "default";
+        if (hasActiveReflectionSubagent(agentId, autoReflectConversationId)) {
           debugLog(
             "memory",
             `Skipping auto reflection launch (${triggerSource}) because one is already active`,
