@@ -74,8 +74,10 @@ const withShebang = `#!/usr/bin/env node
 ${content}`;
 await Bun.write(outputPath, withShebang);
 
-// Make executable
-await Bun.$`chmod +x letta.js`;
+// Make executable (skip on Windows where chmod is not available)
+if (process.platform !== "win32") {
+  await Bun.$`chmod +x letta.js`;
+}
 
 // Copy bundled skills to skills/ directory for shipping
 const bundledSkillsSrc = join(__dirname, "src/skills/builtin");
