@@ -1,5 +1,11 @@
 #!/usr/bin/env sh
 
+# Ensure Bun is in PATH (may not be available in Git's hook environment)
+case ":$PATH:" in
+  *":$HOME/.bun/bin:"*) ;;
+  *) export PATH="$HOME/.bun/bin:$PATH" ;;
+esac
+
 # Lint staged files only (fast)
 bunx lint-staged
 
