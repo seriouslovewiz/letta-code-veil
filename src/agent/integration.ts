@@ -36,6 +36,11 @@ import {
   type OperationMode,
   taskKindToMode,
 } from "./modes/types";
+import {
+  getSanghaStatus,
+  indexMemoryEvents,
+  indexPipelineResults,
+} from "./sangha-integration";
 
 // ============================================================================
 // Agent Runtime State
@@ -211,6 +216,8 @@ export interface PostTurnHookResult {
   pipelineResults: PipelineResult[];
   /** Whether any candidates were queued for review */
   hasQueuedCandidates: boolean;
+  /** Number of candidates indexed to the mindmap (sangha) */
+  mindmapIndexed: number;
 }
 
 /**
@@ -257,9 +264,30 @@ export function postTurnHook(
 
   state.lastPipelineResults = candidates;
 
+  // Index approved candidates to the mindmap (sangha integration)
+  // This is async — we fire and forget, don't block the turn
+  let mindmapIndexed = 0;
+  if (candidates.length > 0) {
+    indexPipelineResults(candidates)
+      .then((result) => {
+        mindmapIndexed = result.indexed;
+      })
+      .catch(() => {
+        // Non-critical — mindmap indexing is best-effort
+      });
+  }
+
+  // Also index any memory write events from this turn
+  if (state.turnEvents.length > 0) {
+    indexMemoryEvents(state.turnEvents).catch(() => {
+      // Non-critical
+    });
+  }
+
   return {
     pipelineResults: candidates,
     hasQueuedCandidates: candidates.some((c) => c.decision === "queued"),
+    mindmapIndexed,
   };
 }
 
@@ -559,6 +587,14 @@ export function getLanternStatus(state: LanternRuntimeState): string {
   }
 
   lines.push(`Events:        ${state.turnEvents.length} collected this turn`);
+
+  // Append sangha integration status
+  lines.push("");
+  // Note: getSanghaStatus is async, but getLanternStatus is sync.
+  // We add a placeholder that the /lantern command handler can resolve.
+  lines.push(
+    "(Sangha status: run /lantern --sangha for full integration status)",
+  );
 
   return lines.join("\n");
 }
