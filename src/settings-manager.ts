@@ -59,6 +59,7 @@ export interface AgentSettings {
     | "gemini_snake"
     | "none"; // toolset mode for this agent (manual override or auto)
   systemPromptPreset?: string; // known preset ID, "custom", or undefined (legacy/subagent)
+  eim?: boolean; // true if EIM (Emulated Identity Model) context injection is enabled
 }
 
 export interface Settings {
@@ -1616,6 +1617,8 @@ class SettingsManager {
           updates.systemPromptPreset !== undefined
             ? updates.systemPromptPreset
             : existing.systemPromptPreset,
+        // Use nullish coalescing for eim (undefined = keep existing)
+        eim: updates.eim !== undefined ? updates.eim : existing.eim,
       };
       // Clean up undefined/false values
       if (!updated.pinned) delete updated.pinned;
@@ -1624,6 +1627,7 @@ class SettingsManager {
         delete updated.toolset;
       if (!updated.systemPromptPreset) delete updated.systemPromptPreset;
       if (!updated.baseUrl) delete updated.baseUrl;
+      if (!updated.eim) delete updated.eim;
       agents[idx] = updated;
     } else {
       // Create new
@@ -1639,6 +1643,7 @@ class SettingsManager {
         delete newAgent.toolset;
       if (!newAgent.systemPromptPreset) delete newAgent.systemPromptPreset;
       if (!newAgent.baseUrl) delete newAgent.baseUrl;
+      if (!newAgent.eim) delete newAgent.eim;
       agents.push(newAgent);
     }
 
@@ -1661,6 +1666,20 @@ class SettingsManager {
     const settings = this.getSettings();
     const memfsServerKey = getCurrentMemfsServerKey(settings);
     this.upsertAgentSettings(agentId, { memfs: enabled }, memfsServerKey);
+  }
+
+  /**
+   * Check if EIM (Emulated Identity Model) context injection is enabled for an agent.
+   */
+  isEIMEnabled(agentId: string): boolean {
+    return this.getAgentSettings(agentId)?.eim === true;
+  }
+
+  /**
+   * Enable or disable EIM context injection for an agent.
+   */
+  setEIMEnabled(agentId: string, enabled: boolean): void {
+    this.upsertAgentSettings(agentId, { eim: enabled });
   }
 
   /**

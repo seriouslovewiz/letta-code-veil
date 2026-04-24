@@ -5,6 +5,7 @@ import type {
   ApprovalDecision,
   ApprovalResult,
 } from "../../agent/approval-execution";
+import type { LanternRuntimeState } from "../../agent/integration";
 import type { ChannelTurnSource } from "../../channels/types";
 import type { ContextTracker } from "../../cli/helpers/contextTracker";
 import type { ApprovalRequest } from "../../cli/helpers/stream";
@@ -149,6 +150,8 @@ export type ConversationRuntime = {
   reminderState: SharedReminderState;
   /** Per-conversation tracker for compaction/reflection cadence. */
   contextTracker: ContextTracker;
+  /** Lantern Shell runtime state (EIM mode, memory pipeline, turn tracking). */
+  lanternState: LanternRuntimeState;
 };
 
 export type ListenerRuntime = {

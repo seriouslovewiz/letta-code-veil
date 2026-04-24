@@ -139,6 +139,25 @@ export const commands: Record<string, Command> = {
       return "Managing memory filesystem...";
     },
   },
+
+  "/eim": {
+    desc: "Manage EIM identity context injection (/eim [status|enable|disable])",
+    args: "[status|enable|disable]",
+    order: 27.6,
+    handler: () => {
+      // Handled specially in App.tsx
+      return "Managing EIM context injection...";
+    },
+  },
+  "/lantern": {
+    desc: "Show Lantern Shell status (mode, model, budget, pipeline)",
+    order: 27.7,
+    noArgs: true,
+    handler: () => {
+      // Handled specially in App.tsx
+      return "Loading Lantern Shell status...";
+    },
+  },
   "/search": {
     desc: "Search messages across all agents (/search [query])",
     order: 15.1,

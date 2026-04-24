@@ -569,6 +569,124 @@ export async function handleIncomingMessage(
       }
     }
 
+    // EIM context injection — task-aware identity directives prepended to
+    // the user message as a <system-reminder> block. Follows the same pattern
+    // as reminder injection above. Only runs when EIM is enabled for this agent.
+    if (
+      !isApprovalMessage &&
+      agentId &&
+      settingsManager.isReady &&
+      settingsManager.isEIMEnabled(agentId)
+    ) {
+      try {
+        const { loadEIMConfig, compileEIMTurnContext, prependEIMContext } =
+          await import("../../agent/eim");
+
+        const eimConfig = loadEIMConfig(agentId);
+
+        // Extract user message text for task classification
+        let userMessageText = "";
+        for (const m of messagesToSend) {
+          if ("role" in m && m.role === "user" && "content" in m) {
+            const content = m.content;
+            if (typeof content === "string") {
+              userMessageText = content;
+            } else if (Array.isArray(content)) {
+              userMessageText = content
+                .filter(
+                  (p): p is { type: "text"; text: string } => p.type === "text",
+                )
+                .map((p) => p.text)
+                .join(" ");
+            }
+            break;
+          }
+        }
+
+        // Build mode state from runtime if available
+        const modeState = runtime.lanternState?.modeState;
+
+        const result = compileEIMTurnContext(userMessageText, {
+          eimConfig,
+          modeState,
+        });
+
+        // Update runtime mode state if mode changed
+        if (modeState && runtime.lanternState) {
+          const { enterMode } = await import("../../agent/modes/types");
+          const previousMode = runtime.lanternState.modeState.activeMode;
+          if (
+            runtime.lanternState.modeState.activeMode !== result.resolvedMode
+          ) {
+            runtime.lanternState.modeState = enterMode(
+              runtime.lanternState.modeState,
+              result.resolvedMode,
+              "auto",
+            );
+
+            // Emit mode_change event
+            try {
+              const { createModeChangeEvent } = await import(
+                "../../agent/events/instrumentation"
+              );
+              const event = createModeChangeEvent(
+                agentId,
+                previousMode,
+                result.resolvedMode,
+                { conversationId },
+              );
+              runtime.lanternState.turnEvents.push(event);
+            } catch {
+              // Event emission is best-effort
+            }
+          }
+          runtime.lanternState.currentTaskKind = result.taskKind;
+          runtime.lanternState.turnCount++;
+          runtime.lanternState.contextCompiled = true;
+
+          // Compute model selection and context budget (informational)
+          try {
+            const { routeModel } = await import("../../agent/models/router");
+            const { calculateBudget } = await import(
+              "../../agent/context/compiler"
+            );
+            const modelResult = routeModel(result.taskKind, {
+              mode: result.resolvedMode,
+            });
+            runtime.lanternState.modelSelection = {
+              model: modelResult.model.id,
+              reason: modelResult.reason,
+            };
+            runtime.lanternState.contextBudget = calculateBudget(
+              modelResult.model.capabilities.contextWindow,
+            );
+          } catch {
+            // Model selection is best-effort
+          }
+        }
+
+        if (result.eimContext) {
+          for (const m of messagesToSend) {
+            if ("role" in m && m.role === "user" && "content" in m) {
+              m.content = prependEIMContext(m.content, result.eimContext);
+              break;
+            }
+          }
+        }
+      } catch (err) {
+        // EIM injection is best-effort — failures must not prevent
+        // the user message from being sent to the agent.
+        trackBoundaryError({
+          errorType: "listener_eim_injection_failed",
+          error: err,
+          context: "listener_turn_eim",
+        });
+        if (isDebugEnabled()) {
+          console.error("[Listen] Failed to inject EIM context:", err);
+        }
+      }
+    }
+
     let currentInput = messagesToSend;
     let pendingNormalizationInterruptedToolCallIds = [
       ...queuedInterruptedToolCallIds,
@@ -742,6 +860,54 @@ export async function handleIncomingMessage(
           );
         }
         runtime.lastStopReason = "end_turn";
+
+        // Post-turn Lantern Shell hooks: memory pipeline + event flush
+        if (runtime.lanternState && agentId) {
+          try {
+            const { postTurnHook, flushTurnEvents } = await import(
+              "../../agent/integration"
+            );
+
+            // Extract assistant and user message text from buffers
+            let assistantText = "";
+            let userText = "";
+            for (const line of toLines(buffers)) {
+              if (line.kind === "assistant" && line.text) {
+                assistantText = line.text;
+              }
+              if (line.kind === "user" && line.text) {
+                userText = line.text;
+              }
+            }
+
+            // Run memory pipeline
+            postTurnHook(
+              {
+                conversationId,
+                turnNumber: runtime.lanternState.turnCount,
+                assistantMessage: assistantText || undefined,
+                userMessage: userText || undefined,
+              },
+              runtime.lanternState,
+            );
+
+            // Flush collected events to audit log
+            const flushed = flushTurnEvents(runtime.lanternState);
+            if (flushed > 0 && isDebugEnabled()) {
+              console.debug(
+                `[Listen] Lantern Shell: flushed ${flushed} events, ${runtime.lanternState.lastPipelineResults.length} memory candidates`,
+              );
+            }
+          } catch (err) {
+            // Post-turn hooks are best-effort
+            trackBoundaryError({
+              errorType: "listener_lantern_post_turn_failed",
+              error: err,
+              context: "listener_turn_lantern_post",
+            });
+          }
+        }
+
         runtime.isProcessing = false;
         clearActiveRunState(runtime);
         setLoopStatus(runtime, "WAITING_ON_INPUT", {

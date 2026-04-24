@@ -10182,6 +10182,96 @@ export default function App({
           return { submitted: true };
         }
 
+        // /eim - manage EIM identity context injection
+        if (trimmed.startsWith("/eim")) {
+          const [, subcommand] = trimmed.split(/\s+/);
+          const cmd = commandRunner.start(
+            msg.trim(),
+            "Processing EIM command...",
+          );
+
+          if (!subcommand || subcommand === "help") {
+            const output = [
+              "/eim help",
+              "",
+              "Manage EIM (Emulated Identity Model) context injection.",
+              "",
+              "EIM compiles task-aware identity directives (style, boundaries,",
+              "continuity priorities) and injects them as a system-reminder block",
+              "before each user message. This makes identity context selective",
+              "and task-aware rather than always loading the full persona.",
+              "",
+              "USAGE",
+              "  /eim status    — show current EIM status",
+              "  /eim enable    — enable EIM context injection",
+              "  /eim disable   — disable EIM context injection",
+              "  /eim help      — show this help",
+            ].join("\n");
+            cmd.finish(output, true);
+            return { submitted: true };
+          }
+
+          if (subcommand === "status") {
+            const enabled = settingsManager.isEIMEnabled(agentId);
+            const output = enabled
+              ? "EIM context injection is enabled.\nTask-aware identity directives will be injected before each user message."
+              : "EIM context injection is disabled.\nRun `/eim enable` to enable.";
+            cmd.finish(output, true);
+            return { submitted: true };
+          }
+
+          if (subcommand === "enable") {
+            settingsManager.setEIMEnabled(agentId, true);
+            cmd.finish(
+              "EIM context injection enabled.\nTask-aware identity directives will be injected before each user message.",
+              true,
+            );
+            return { submitted: true };
+          }
+
+          if (subcommand === "disable") {
+            settingsManager.setEIMEnabled(agentId, false);
+            cmd.finish("EIM context injection disabled.", true);
+            return { submitted: true };
+          }
+
+          cmd.fail(
+            `Unknown subcommand: "${subcommand}". Run /eim help for usage.`,
+          );
+          return { submitted: true };
+        }
+
+        // /lantern - show Lantern Shell status
+        if (trimmed === "/lantern") {
+          const cmd = commandRunner.start(
+            msg.trim(),
+            "Loading Lantern Shell status...",
+          );
+
+          if (!settingsManager.isEIMEnabled(agentId)) {
+            cmd.finish(
+              "Lantern Shell is not active. Enable EIM first with /eim enable.",
+              true,
+            );
+            return { submitted: true };
+          }
+
+          try {
+            const { getLanternStatus, createInitialRuntimeState } =
+              await import("../agent/integration");
+            const { loadEIMConfig } = await import("../agent/eim");
+            const eimConfig = loadEIMConfig(agentId);
+            const state = createInitialRuntimeState(eimConfig);
+            cmd.finish(getLanternStatus(state), true);
+          } catch (err) {
+            cmd.finish(
+              `Failed to load Lantern Shell status: ${err instanceof Error ? err.message : String(err)}`,
+              false,
+            );
+          }
+          return { submitted: true };
+        }
+
         // /skills - browse available skills overlay
         if (trimmed === "/skills") {
           startOverlayCommand(
