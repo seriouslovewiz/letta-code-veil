@@ -198,7 +198,7 @@ export function preTurnHook(
     try {
       memories = retrieveMemoriesForTurn(taskKind, options.agentId, {
         limit: 5,
-        eimMemoryTypePriority: eimSlice.memoryTypePriority,
+        eimTypePriority: eimSlice.memoryTypePriority,
       });
       if (memories.length > 0) {
         retrievedMemories = memories
