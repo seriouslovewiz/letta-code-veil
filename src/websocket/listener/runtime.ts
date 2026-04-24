@@ -1,3 +1,4 @@
+import { createInitialRuntimeState } from "../../agent/integration";
 import { createContextTracker } from "../../cli/helpers/contextTracker";
 import { createSharedReminderState } from "../../reminders/state";
 import type { PendingControlRequest } from "../../types/protocol_v2";
@@ -200,6 +201,7 @@ export function createConversationRuntime(
         listener.contextTrackerByConversation.set(runtimeKey, tracker);
         return tracker;
       })(),
+    lanternState: createInitialRuntimeState(),
   };
   listener.conversationRuntimes.set(
     conversationRuntime.key,
