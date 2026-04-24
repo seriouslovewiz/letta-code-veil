@@ -1217,10 +1217,11 @@ export default function App({
 
   // Keep a ref to the current conversationId for use in callbacks
   const conversationIdRef = useRef(conversationId);
-  // Lantern Shell runtime state — persists across turns within a session
-  const lanternStateRef = useRef<
-    import("../agent/integration").LanternRuntimeState | null
-  >(null);
+  // Lantern Shell runtime state — per-agent, persists across turns within a session
+  // Keyed by agentId so multiple agents in the same process don't collide
+  const lanternStatesRef = useRef<
+    Map<string, import("../agent/integration").LanternRuntimeState>
+  >(new Map());
   useEffect(() => {
     conversationIdRef.current = conversationId;
   }, [conversationId]);
@@ -5093,10 +5094,14 @@ export default function App({
                   postTurnHook: lanternPostTurn,
                   createInitialRuntimeState,
                 } = await import("../agent/integration");
-                // Use persisted runtime state (or create fresh on first turn)
-                if (!lanternStateRef.current) {
-                  lanternStateRef.current = createInitialRuntimeState();
+                // Use persisted runtime state (per-agent, or create fresh on first turn)
+                if (!lanternStatesRef.current.has(agentId)) {
+                  lanternStatesRef.current.set(
+                    agentId,
+                    createInitialRuntimeState(),
+                  );
                 }
+                const lanternState = lanternStatesRef.current.get(agentId)!;
                 const result = await lanternPostTurn(
                   {
                     conversationId: conversationIdRef.current ?? undefined,
@@ -5105,7 +5110,7 @@ export default function App({
                     userMessage,
                     agentId,
                   },
-                  lanternStateRef.current,
+                  lanternState,
                   { persist: true },
                 );
                 if (
@@ -10299,12 +10304,16 @@ export default function App({
             const { getLanternStatus, createInitialRuntimeState } =
               await import("../agent/integration");
             const { loadEIMConfig } = await import("../agent/eim");
-            // Use persisted state if available, otherwise create fresh
-            if (!lanternStateRef.current) {
+            // Use persisted state if available (per-agent), otherwise create fresh
+            if (!lanternStatesRef.current.has(agentId)) {
               const eimConfig = loadEIMConfig(agentId);
-              lanternStateRef.current = createInitialRuntimeState(eimConfig);
+              lanternStatesRef.current.set(
+                agentId,
+                createInitialRuntimeState(eimConfig),
+              );
             }
-            cmd.finish(getLanternStatus(lanternStateRef.current), true);
+            const lanternState = lanternStatesRef.current.get(agentId)!;
+            cmd.finish(getLanternStatus(lanternState), true);
           } catch (err) {
             cmd.finish(
               `Failed to load Lantern Shell status: ${err instanceof Error ? err.message : String(err)}`,
@@ -11141,12 +11150,16 @@ ${SYSTEM_REMINDER_CLOSE}
             "../agent/integration"
           );
           const eimConfig = loadEIMConfig(agentId);
-          // Initialize or reuse persisted Lantern Shell state
-          if (!lanternStateRef.current) {
-            lanternStateRef.current = createInitialRuntimeState(eimConfig);
+          // Initialize or reuse persisted Lantern Shell state (per-agent)
+          if (!lanternStatesRef.current.has(agentId)) {
+            lanternStatesRef.current.set(
+              agentId,
+              createInitialRuntimeState(eimConfig),
+            );
           }
+          const lanternState = lanternStatesRef.current.get(agentId)!;
           // Run preTurnHook to update runtime state (mode, task kind, turn count)
-          preTurnHook(userTextForInput, lanternStateRef.current, {
+          preTurnHook(userTextForInput, lanternState, {
             agentId,
             conversationId: conversationIdRef.current ?? undefined,
           });
