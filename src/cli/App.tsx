@@ -1213,6 +1213,10 @@ export default function App({
 
   // Keep a ref to the current conversationId for use in callbacks
   const conversationIdRef = useRef(conversationId);
+  // Lantern Shell runtime state — persists across turns within a session
+  const lanternStateRef = useRef<
+    import("../agent/integration").LanternRuntimeState | null
+  >(null);
   useEffect(() => {
     conversationIdRef.current = conversationId;
   }, [conversationId]);
@@ -5081,14 +5085,14 @@ export default function App({
             // Post-turn continuity core: persist memory candidates
             if (agentId && settingsManager.isEIMEnabled(agentId)) {
               try {
-                const { postTurnHook: lanternPostTurn } = await import(
-                  "../agent/integration"
-                );
-                const { createInitialRuntimeState } = await import(
-                  "../agent/integration"
-                );
-                // Use a lightweight runtime state for the pipeline
-                const runtimeState = createInitialRuntimeState();
+                const {
+                  postTurnHook: lanternPostTurn,
+                  createInitialRuntimeState,
+                } = await import("../agent/integration");
+                // Use persisted runtime state (or create fresh on first turn)
+                if (!lanternStateRef.current) {
+                  lanternStateRef.current = createInitialRuntimeState();
+                }
                 const result = await lanternPostTurn(
                   {
                     conversationId: conversationIdRef.current ?? undefined,
@@ -5097,7 +5101,7 @@ export default function App({
                     userMessage,
                     agentId,
                   },
-                  runtimeState,
+                  lanternStateRef.current,
                   { persist: true },
                 );
                 if (
@@ -10286,9 +10290,12 @@ export default function App({
             const { getLanternStatus, createInitialRuntimeState } =
               await import("../agent/integration");
             const { loadEIMConfig } = await import("../agent/eim");
-            const eimConfig = loadEIMConfig(agentId);
-            const state = createInitialRuntimeState(eimConfig);
-            cmd.finish(getLanternStatus(state), true);
+            // Use persisted state if available, otherwise create fresh
+            if (!lanternStateRef.current) {
+              const eimConfig = loadEIMConfig(agentId);
+              lanternStateRef.current = createInitialRuntimeState(eimConfig);
+            }
+            cmd.finish(getLanternStatus(lanternStateRef.current), true);
           } catch (err) {
             cmd.finish(
               `Failed to load Lantern Shell status: ${err instanceof Error ? err.message : String(err)}`,
@@ -11121,7 +11128,19 @@ ${SYSTEM_REMINDER_CLOSE}
           const { loadEIMConfig, compileEIMTurnContext } = await import(
             "../agent/eim"
           );
+          const { preTurnHook, createInitialRuntimeState } = await import(
+            "../agent/integration"
+          );
           const eimConfig = loadEIMConfig(agentId);
+          // Initialize or reuse persisted Lantern Shell state
+          if (!lanternStateRef.current) {
+            lanternStateRef.current = createInitialRuntimeState(eimConfig);
+          }
+          // Run preTurnHook to update runtime state (mode, task kind, turn count)
+          preTurnHook(userTextForInput, lanternStateRef.current, {
+            agentId,
+            conversationId: conversationIdRef.current ?? undefined,
+          });
           // Classify based on the actual user text, not the reminder parts
           const result = compileEIMTurnContext(userTextForInput, { eimConfig });
           if (result.eimContext) {
