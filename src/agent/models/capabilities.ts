@@ -455,6 +455,40 @@ export function initializeDefaultModels(): void {
         cost: "low",
       },
     },
+    // Local inference models (llama.cpp)
+    {
+      id: "gemma4-e4b",
+      handle: "openai-proxy/gemma-4-E4B-it-Q5_K_M.gguf",
+      label: "Gemma 4 E4B (local)",
+      description:
+        "Google Gemma 4 E4B — multimodal, 128K context, local inference via llama.cpp",
+      free: true,
+      capabilities: {
+        contextWindow: 128000,
+        maxOutputTokens: 8192,
+        vision: true,
+        codeQuality: "good",
+        speed: "fast",
+        cost: "low",
+      },
+    },
+    {
+      id: "qwen35-4b",
+      handle: "openai-proxy/Qwen3.5-4B-Q5_K_M.gguf",
+      label: "Qwen 3.5 4B (local)",
+      description:
+        "Alibaba Qwen 3.5 4B — strong reasoning/coding, 262K context, local inference via llama.cpp",
+      free: true,
+      isDefault: true,
+      capabilities: {
+        contextWindow: 262144,
+        maxOutputTokens: 8192,
+        codeQuality: "excellent",
+        reasoning: "extended",
+        speed: "fast",
+        cost: "low",
+      },
+    },
   ];
 
   for (const entry of defaults) {
