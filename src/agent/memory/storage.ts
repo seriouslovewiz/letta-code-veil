@@ -274,6 +274,8 @@ export function retrieveMemoriesForTurn(
     project?: string;
     limit?: number;
     searchText?: string;
+    /** EIM memory type priority — overrides taxonomy defaults when provided */
+    eimMemoryTypePriority?: string[];
   },
 ): MemoryEntry[] {
   const memoryRoot = getMemoryFilesystemRoot(agentId);
@@ -288,6 +290,7 @@ export function retrieveMemoriesForTurn(
     },
     memoryRoot,
     taskKind,
+    options?.eimMemoryTypePriority,
   );
 
   // Update access counts for retrieved memories

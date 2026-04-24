@@ -133,11 +133,20 @@ export function rebuildMemoryIndex(memoryRoot: string): MemoryIndex {
 
 /**
  * Execute a memory query against the index.
+ *
+ * Type priority is resolved in order:
+ * 1. Explicit query.types (caller-specified)
+ * 2. EIM memoryTypePriority (from agent's identity config)
+ * 3. TASK_MEMORY_PRIORITY (hardcoded taxonomy defaults)
+ *
+ * This closes the wiring gap Emberwyn identified: the retrieval engine
+ * now respects the EIM's memoryTypePriority when available.
  */
 export function queryMemories(
   query: MemoryQuery,
   memoryRoot: string,
   taskKind?: TaskKind,
+  eimMemoryTypePriority?: string[],
 ): MemoryQueryResult {
   const startTime = Date.now();
 
@@ -147,10 +156,15 @@ export function queryMemories(
     index = rebuildMemoryIndex(memoryRoot);
   }
 
-  // Determine type priority from task kind
-  const typePriority = taskKind
-    ? TASK_MEMORY_PRIORITY[taskKind] || []
-    : undefined;
+  // Determine type priority: EIM overrides taxonomy defaults
+  let typePriority: string[] | undefined;
+  if (eimMemoryTypePriority && eimMemoryTypePriority.length > 0) {
+    // EIM's memoryTypePriority takes precedence
+    typePriority = eimMemoryTypePriority;
+  } else if (taskKind) {
+    // Fall back to hardcoded taxonomy defaults
+    typePriority = TASK_MEMORY_PRIORITY[taskKind] || [];
+  }
 
   // Collect candidate entries
   let candidates: MemoryIndexEntry[] = [];
@@ -161,9 +175,10 @@ export function queryMemories(
       candidates.push(...(index.byType[type] || []));
     }
   } else if (typePriority && typePriority.length > 0) {
-    // Use task-based priority
+    // Use task-based priority (from EIM or taxonomy defaults)
     for (const type of typePriority) {
-      candidates.push(...(index.byType[type] || []));
+      const entries = index.byType[type as keyof typeof index.byType];
+      if (entries) candidates.push(...entries);
     }
   } else {
     // All types, sorted by recency

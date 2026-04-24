@@ -191,12 +191,14 @@ export function preTurnHook(
   );
 
   // 7. Retrieve relevant memories from continuity core
+  //    EIM's memoryTypePriority overrides taxonomy defaults
   let memories: MemoryEntry[] | undefined;
   let retrievedMemories: string | undefined;
   if (options?.agentId) {
     try {
       memories = retrieveMemoriesForTurn(taskKind, options.agentId, {
         limit: 5,
+        eimMemoryTypePriority: eimSlice.memoryTypePriority,
       });
       if (memories.length > 0) {
         retrievedMemories = memories
