@@ -20,12 +20,14 @@ import {
   createToolCallEvent,
 } from "./events/instrumentation";
 import type { AgentEvent } from "./events/types";
-import {
-  type ActionCategory,
-  hasPermission,
-  logAuditEvent,
-} from "./governance/rbac";
+import { hasPermission, logAuditEvent } from "./governance/rbac";
+import type { MemoryEntry } from "./memory/continuity-schema";
 import { type PipelineResult, processCandidate } from "./memory/pipeline";
+import {
+  retrieveMemoriesForTurn,
+  type StorageResult,
+  storePipelineResults,
+} from "./memory/storage";
 import { routeModel } from "./models/router";
 import {
   createInitialModeState,
@@ -71,6 +73,8 @@ export interface LanternRuntimeState {
   contextBudget?: ContextBudget;
   /** Events collected during this turn (flushed to audit log on end_turn) */
   turnEvents: AgentEvent[];
+  /** Turns since last reflection cycle (for throttling) */
+  turnsSinceLastReflection?: number;
 }
 
 /**
@@ -102,6 +106,8 @@ export interface PreTurnHookResult {
   contextSections: {
     identity: string;
     memoryHint: string;
+    /** Retrieved memories formatted for injection */
+    retrievedMemories?: string;
   };
   /** Task kind classification */
   taskKind: TaskKind;
@@ -112,6 +118,8 @@ export interface PreTurnHookResult {
     model: string;
     reason: string;
   };
+  /** Retrieved memories (raw entries) */
+  memories?: MemoryEntry[];
 }
 
 /**
@@ -182,7 +190,28 @@ export function preTurnHook(
     modelResult.model.capabilities.contextWindow,
   );
 
-  // 7. Build context sections
+  // 7. Retrieve relevant memories from continuity core
+  let memories: MemoryEntry[] | undefined;
+  let retrievedMemories: string | undefined;
+  if (options?.agentId) {
+    try {
+      memories = retrieveMemoriesForTurn(taskKind, options.agentId, {
+        limit: 5,
+      });
+      if (memories.length > 0) {
+        retrievedMemories = memories
+          .map(
+            (m) =>
+              `[${m.frontmatter.type}] ${m.content} (${m.frontmatter.importance}, accessed ${m.frontmatter.accessCount}x)`,
+          )
+          .join("\n");
+      }
+    } catch {
+      // Retrieval is best-effort
+    }
+  }
+
+  // 8. Build context sections
   const contextSections = {
     identity: [
       eimFragments.styleDirective,
@@ -192,6 +221,7 @@ export function preTurnHook(
       .filter(Boolean)
       .join("\n\n"),
     memoryHint: eimFragments.memoryRetrievalHint ?? "",
+    retrievedMemories,
   };
 
   state.contextCompiled = true;
@@ -205,6 +235,7 @@ export function preTurnHook(
       model: modelResult.model.id,
       reason: modelResult.reason,
     },
+    memories,
   };
 }
 
@@ -218,20 +249,29 @@ export interface PostTurnHookResult {
   hasQueuedCandidates: boolean;
   /** Number of candidates indexed to the mindmap (sangha) */
   mindmapIndexed: number;
+  /** Storage result (if persistence enabled) */
+  storageResult?: StorageResult;
+  /** Reflection result (if persistence enabled) */
+  reflectionResult?: import("./memory/reflection").ReflectionResult;
 }
 
 /**
- * Run post-turn hook: extract memory candidates, run through pipeline.
+ * Run post-turn hook: extract memory candidates, run through pipeline, persist.
  */
-export function postTurnHook(
+export async function postTurnHook(
   conversationContext: {
     conversationId?: string;
     turnNumber: number;
     assistantMessage?: string;
     userMessage?: string;
+    agentId?: string;
   },
   state: LanternRuntimeState,
-): PostTurnHookResult {
+  options?: {
+    /** Enable persistence to continuity core */
+    persist?: boolean;
+  },
+): Promise<PostTurnHookResult> {
   const candidates: PipelineResult[] = [];
 
   // Extract potential memory from assistant message (reflections, observations)
@@ -284,10 +324,48 @@ export function postTurnHook(
     });
   }
 
+  // Persist to continuity core if enabled
+  let storageResult: StorageResult | undefined;
+  if (
+    options?.persist &&
+    candidates.length > 0 &&
+    conversationContext.agentId
+  ) {
+    storageResult = storePipelineResults(
+      candidates,
+      undefined, // use default config
+      conversationContext.agentId,
+      conversationContext.conversationId,
+      conversationContext.turnNumber,
+    );
+  }
+
+  // Run reflection cycle after persistence
+  let reflectionResult:
+    | import("./memory/reflection").ReflectionResult
+    | undefined;
+  if (options?.persist && conversationContext.agentId) {
+    const { runReflectionCycle } = await import("./memory/reflection");
+    reflectionResult = runReflectionCycle({
+      turnEvents: state.turnEvents,
+      agentId: conversationContext.agentId,
+      conversationId: conversationContext.conversationId,
+      turnsSinceLastReflection: state.turnsSinceLastReflection ?? 0,
+    });
+    if (reflectionResult.ran) {
+      state.turnsSinceLastReflection = 0;
+    } else {
+      state.turnsSinceLastReflection =
+        (state.turnsSinceLastReflection ?? 0) + 1;
+    }
+  }
+
   return {
     pipelineResults: candidates,
     hasQueuedCandidates: candidates.some((c) => c.decision === "queued"),
     mindmapIndexed,
+    storageResult,
+    reflectionResult,
   };
 }
 
