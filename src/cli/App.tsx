@@ -295,7 +295,6 @@ import {
 } from "./helpers/reflectionTranscript";
 import { safeJsonParseOr } from "./helpers/safeJsonParse";
 import { getDeviceType, getLocalTime } from "./helpers/sessionContext";
-import { buildStartupSystemPromptWarning } from "./helpers/startupSystemPromptWarning";
 import {
   resolvePromptChar,
   resolveStatusLineConfig,
@@ -329,6 +328,11 @@ import {
   flushEligibleLinesBeforeReentry,
   shouldClearCompletedSubagentsOnTurnStart,
 } from "./helpers/subagentTurnStart";
+import {
+  buildStartupSystemPromptWarning,
+  estimateSystemTokens,
+  setSystemPromptDoctorState,
+} from "./helpers/systemPromptWarning.ts";
 import {
   appendTaskNotificationEventsToBuffer,
   extractTaskNotificationsForDisplay,
@@ -7358,8 +7362,9 @@ export default function App({
           memoryPromptMode: willAutoEnableMemfs ? "memfs" : undefined,
         });
 
-        // Enable memfs on Letta Cloud (tags, repo clone, tool detach).
-        await enableMemfsIfCloud(agent.id);
+        // Enable memfs on Letta Cloud (tags, repo clone, tool detach)
+        // without blocking the new-agent UX on the initial clone.
+        void enableMemfsIfCloud(agent.id);
 
         // Update project settings with new agent
         await updateProjectSettings({ lastAgent: agent.id });
@@ -8683,9 +8688,13 @@ export default function App({
               currentConversationId === "default"
                 ? { agent_id: agentId }
                 : undefined;
-            await client.conversations.recompile(
+            const compiledSystemPrompt = await client.conversations.recompile(
               currentConversationId,
               conversationParams,
+            );
+            setSystemPromptDoctorState(
+              agentId,
+              estimateSystemTokens(compiledSystemPrompt),
             );
 
             cmd.finish(
