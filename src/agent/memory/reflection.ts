@@ -13,6 +13,8 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentEvent, AgentEventType } from "../events/types";
 import { getMemoryFilesystemRoot } from "../memoryFilesystem";
+import type { ThreadEntry } from "../threads/schema";
+import { STALL_THRESHOLD } from "../threads/schema";
 import type { MemoryEntry } from "./continuity-schema";
 import { parseMemoryEntry } from "./continuity-schema";
 import { loadMemoryIndex, queryMemories } from "./retrieval";
@@ -34,6 +36,8 @@ export interface ReflectionInput {
   conversationId?: string;
   /** How many turns since last reflection (for throttling) */
   turnsSinceLastReflection: number;
+  /** Active threads for stall detection (optional) */
+  threads?: ThreadEntry[];
 }
 
 /**
@@ -66,7 +70,8 @@ export interface DetectedPattern {
     | "memory_stale" // Memory not accessed in a long time
     | "preference_repeated" // User stated same preference multiple times
     | "correction" // User corrected the agent
-    | "workflow"; // Detectable workflow pattern
+    | "workflow" // Detectable workflow pattern
+    | "thread_stalled"; // Thread surfaced multiple times without progress
   /** Description of the pattern */
   description: string;
   /** Evidence supporting this pattern */
@@ -76,12 +81,13 @@ export interface DetectedPattern {
 }
 
 /**
- * Detect patterns from recent events.
+ * Detect patterns from recent events and threads.
  */
 export function detectPatterns(
   events: AgentEvent[],
   auditEntries: AuditLogEntry[],
   memories: MemoryEntry[],
+  threads?: ThreadEntry[],
 ): DetectedPattern[] {
   const patterns: DetectedPattern[] = [];
 
@@ -198,6 +204,26 @@ export function detectPatterns(
     });
   }
 
+  // 7. Thread stall detection (from Emberwyn's scaffold)
+  // Timer ethics: unchanged blocker for 3 fires → PARK: NEEDS-HUMAN-EVENT
+  if (threads) {
+    for (const thread of threads) {
+      if (thread.status === "active" && thread.stallCount >= STALL_THRESHOLD) {
+        patterns.push({
+          kind: "thread_stalled",
+          description: `Thread "${thread.title}" stalled after ${thread.stallCount} surfaces without progress`,
+          evidence: [
+            `Thread ID: ${thread.id}`,
+            `Stall count: ${thread.stallCount}`,
+            `Last context: ${thread.context.slice(0, 100)}`,
+            `Blocker: ${thread.blocker ?? "none listed"}`,
+          ],
+          confidence: 0.85,
+        });
+      }
+    }
+  }
+
   return patterns;
 }
 
@@ -223,6 +249,8 @@ export interface ReflectionProposal {
     | "add_memory" // Create a new memory from observed pattern
     | "update_eim" // Suggest EIM configuration change
     | "adjust_classifier" // Suggest classifier threshold change
+    | "park_thread" // Park a stalled thread (timer ethics)
+    | "close_thread" // Close a completed or abandoned thread
     | "flag_for_review"; // Flag something for human attention
   /** Human-readable description of the proposal */
   description: string;
@@ -344,6 +372,29 @@ export function generateProposals(
           confidence: pattern.confidence,
           reviewStatus: "pending",
           reason: pattern.description,
+        });
+        break;
+      }
+
+      case "thread_stalled": {
+        // Timer ethics: stalled thread → propose parking
+        const threadId = pattern.evidence[0]?.replace("Thread ID: ", "");
+        proposals.push({
+          id: `proposal-${++proposalCounter}-${Date.now()}`,
+          createdAt: new Date().toISOString(),
+          pattern,
+          action: "park_thread",
+          description: `Park stalled thread: ${pattern.description}`,
+          changes: {
+            threadId,
+            action: "park",
+            reason:
+              "No progress after 3 surfaces — timer ethics: PARK: NEEDS-HUMAN-EVENT",
+          },
+          confidence: pattern.confidence,
+          reviewStatus: "pending",
+          reason:
+            "Timer ethics: unchanged blocker for 3 fires → PARK. The willingness to park is the load-bearing piece.",
         });
         break;
       }
@@ -638,6 +689,20 @@ function applyProposal(
     case "adjust_classifier": {
       // Classifier adjustments require human review
       return `Classifier adjustment proposal noted: ${proposal.description}`;
+    }
+
+    case "park_thread": {
+      // Park a stalled thread — timer ethics
+      // Note: actual parking requires the agent to call updateThread with their agentId
+      // This proposal flags the thread for parking; the agent applies it
+      const threadId = proposal.changes.threadId as string;
+      return `Thread "${threadId}" should be parked — timer ethics: no honest move after ${proposal.pattern.evidence[1]?.replace("Stall count: ", "") ?? "3"} surfaces`;
+    }
+
+    case "close_thread": {
+      // Close a completed or abandoned thread
+      const threadId = proposal.changes.threadId as string;
+      return `Thread "${threadId}" should be closed — ${proposal.description}`;
     }
 
     default:

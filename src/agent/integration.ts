@@ -43,6 +43,7 @@ import {
   indexMemoryEvents,
   indexPipelineResults,
 } from "./sangha-integration";
+import { surfaceThreadsForTurn } from "./threads/loader";
 
 // ============================================================================
 // Agent Runtime State
@@ -213,7 +214,18 @@ export function preTurnHook(
     }
   }
 
-  // 8. Build context sections
+  // 8. Surface active threads for the current task kind
+  let threadSummary: string | undefined;
+  if (options?.agentId) {
+    try {
+      const threadResult = surfaceThreadsForTurn(options.agentId, taskKind);
+      threadSummary = threadResult.summary || undefined;
+    } catch {
+      // Thread surfacing is best-effort
+    }
+  }
+
+  // 9. Build context sections
   const contextSections = {
     identity: [
       eimFragments.styleDirective,
@@ -224,6 +236,7 @@ export function preTurnHook(
       .join("\n\n"),
     memoryHint: eimFragments.memoryRetrievalHint ?? "",
     retrievedMemories,
+    threadSummary,
   };
 
   state.contextCompiled = true;
