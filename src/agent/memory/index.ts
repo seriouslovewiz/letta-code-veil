@@ -7,6 +7,7 @@
  * - Directory conventions for each type
  * - Frontmatter schema and parsing
  * - Classification (heuristic and LLM-based)
+ * - Lifecycle pipeline (extraction, scoring, review queue)
  */
 
 export type {
@@ -18,12 +19,29 @@ export {
   heuristicClassifyMemory,
   parseLLMClassificationOutput,
 } from "./classifier";
-
+export type {
+  PipelineCandidate,
+  PipelineOptions,
+  PipelineResult,
+  ReviewQueueEntry,
+  ScoringFactors,
+  ScoringResult,
+} from "./pipeline";
+export {
+  approveQueueEntry,
+  enqueueForReview,
+  getPendingReviews,
+  getQueueEntry,
+  getQueueStats,
+  processCandidate,
+  processCandidates,
+  rejectQueueEntry,
+  scoreCandidate,
+} from "./pipeline";
 export type {
   LegacyMemoryMetadata,
   MemoryMetadata,
 } from "./schema";
-
 export {
   createMemoryFile,
   parseMemoryFrontmatter,
