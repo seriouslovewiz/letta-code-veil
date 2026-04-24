@@ -17,6 +17,7 @@ import type {
   MemorySensitivity,
   MemoryType,
 } from "./taxonomy";
+import { MEMORY_TYPE_DIRECTORIES } from "./taxonomy";
 
 // ============================================================================
 // Memory Entry Schema
@@ -230,7 +231,7 @@ export function buildMemoryPath(
   frontmatter: MemoryEntryFrontmatter,
   memoryRoot: string,
 ): string {
-  const typeDir = frontmatter.type; // Matches taxonomy directory names
+  const typeDir = MEMORY_TYPE_DIRECTORIES[frontmatter.type] || frontmatter.type;
   const filename = `${frontmatter.id}${MEMORY_FILE_EXTENSION}`;
   return `${memoryRoot}/${typeDir}/${filename}`;
 }
