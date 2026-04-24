@@ -11070,6 +11070,34 @@ ${SYSTEM_REMINDER_CLOSE}
       pushReminder(bashCommandPrefix);
       pushReminder(userPromptSubmitHookFeedback);
       pushReminder(memoryGitReminder);
+
+      // EIM context injection — add as a reminder part so it uses the same
+      // delivery mechanism as other system-reminder blocks the agent can see.
+      if (settingsManager.isReady && settingsManager.isEIMEnabled(agentId)) {
+        try {
+          const { loadEIMConfig, compileEIMTurnContext } = await import(
+            "../agent/eim"
+          );
+          const eimConfig = loadEIMConfig(agentId);
+          // Classify based on the actual user text, not the reminder parts
+          const result = compileEIMTurnContext(userTextForInput, { eimConfig });
+          if (result.eimContext) {
+            pushReminder(result.eimContext);
+            debugLog(
+              "EIM",
+              `injected as reminder part (taskKind=${result.taskKind})`,
+            );
+          } else {
+            debugLog(
+              "EIM",
+              `no context produced (taskKind=${result.taskKind})`,
+            );
+          }
+        } catch (err) {
+          debugWarn("EIM", "Failed to inject EIM context:", err);
+        }
+      }
+
       const messageContent =
         reminderParts.length > 0
           ? [...reminderParts, ...contentParts]
