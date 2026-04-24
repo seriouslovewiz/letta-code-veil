@@ -78,7 +78,7 @@ User → Agent Runtime → Context Compiler → Model(s) → Reflection → Memo
 
 ## Implementation Phases
 
-See `C:\Users\Andrew\.letta\plans\quick-playful-zephyr.md` for the full phased plan.
+See the project's `.letta/plans/` directory for the full phased plan.
 
 ## Design Decisions
 
@@ -87,5 +87,5 @@ See `C:\Users\Andrew\.letta\plans\quick-playful-zephyr.md` for the full phased p
 | EIM format | Hybrid prose + structure | Prose carries voice; structure carries queryable metadata |
 | Memory pipeline timing | Async (post-turn) | Keeps main turn fast; high-confidence candidates auto-approved |
 | Search backend | Letta API (server-side) | Vector/FTS indexes live server-side; avoids local infra complexity |
-| Target platform | Windows | API-based orchestration preferred; local classifiers optional |
-| Project naming | letta-code-DE | Building on Letta Code; may contribute features back as PRs |
+| Target platform | Cross-platform (Linux + Windows) | API-based orchestration preferred; local classifiers optional |
+| Project naming | letta-code-veil | V_M fork of letta-code-DE; building toward Refining Mind integration |
