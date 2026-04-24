@@ -578,6 +578,11 @@ export async function handleIncomingMessage(
       settingsManager.isReady &&
       settingsManager.isEIMEnabled(agentId)
     ) {
+      if (isDebugEnabled()) {
+        console.debug(
+          "[Listen] EIM injection: conditions met, loading modules...",
+        );
+      }
       try {
         const { loadEIMConfig, compileEIMTurnContext, prependEIMContext } =
           await import("../../agent/eim");
@@ -666,11 +671,23 @@ export async function handleIncomingMessage(
         }
 
         if (result.eimContext) {
+          if (isDebugEnabled()) {
+            console.debug(
+              "[Listen] EIM injection: prepending context to user message",
+              result.eimContext.substring(0, 200),
+            );
+          }
           for (const m of messagesToSend) {
             if ("role" in m && m.role === "user" && "content" in m) {
               m.content = prependEIMContext(m.content, result.eimContext);
               break;
             }
+          }
+        } else {
+          if (isDebugEnabled()) {
+            console.debug(
+              "[Listen] EIM injection: compileEIMTurnContext returned null eimContext",
+            );
           }
         }
       } catch (err) {
@@ -685,6 +702,10 @@ export async function handleIncomingMessage(
           console.error("[Listen] Failed to inject EIM context:", err);
         }
       }
+    } else if (!isApprovalMessage && agentId && isDebugEnabled()) {
+      console.debug(
+        `[Listen] EIM injection: skipped (isReady=${settingsManager.isReady}, eimEnabled=${settingsManager.isEIMEnabled(agentId)})`,
+      );
     }
 
     let currentInput = messagesToSend;
