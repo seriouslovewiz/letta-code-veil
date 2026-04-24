@@ -8,13 +8,15 @@
  * - Memory tool integration with the lifecycle pipeline
  */
 
-import { classifyTask } from "./context/compiler";
+import type { ContextBudget } from "./context/compiler";
+import { calculateBudget, classifyTask } from "./context/compiler";
 import { compileEIMPromptFragments } from "./eim/compiler";
 import type { EIMConfig, TaskKind } from "./eim/types";
 import { compileEIMContext, DEFAULT_EIM_CONFIG } from "./eim/types";
 import {
   createMemoryReadEvent,
   createMemoryWriteEvent,
+  createModeChangeEvent,
   createToolCallEvent,
 } from "./events/instrumentation";
 import type { AgentEvent } from "./events/types";
@@ -55,6 +57,15 @@ export interface LanternRuntimeState {
   turnCount: number;
   /** Whether context has been compiled for this turn */
   contextCompiled: boolean;
+  /** Model selection result from last pre-turn hook (informational) */
+  modelSelection?: {
+    model: string;
+    reason: string;
+  };
+  /** Context budget allocation from last pre-turn hook (informational) */
+  contextBudget?: ContextBudget;
+  /** Events collected during this turn (flushed to audit log on end_turn) */
+  turnEvents: AgentEvent[];
 }
 
 /**
@@ -70,6 +81,7 @@ export function createInitialRuntimeState(
     lastPipelineResults: [],
     turnCount: 0,
     contextCompiled: false,
+    turnEvents: [],
   };
 }
 
@@ -106,6 +118,8 @@ export function preTurnHook(
   options?: {
     activeMode?: OperationMode;
     preferredModel?: string;
+    agentId?: string;
+    conversationId?: string;
   },
 ): PreTurnHookResult {
   // 1. Classify task
@@ -114,6 +128,7 @@ export function preTurnHook(
 
   // 2. Determine operation mode
   let mode: OperationMode;
+  const previousMode = state.modeState.activeMode;
   if (options?.activeMode) {
     mode = options.activeMode;
     state.modeState = enterMode(state.modeState, mode, "manual");
@@ -122,6 +137,17 @@ export function preTurnHook(
     if (state.modeState.activeMode !== mode) {
       state.modeState = enterMode(state.modeState, mode, "auto");
     }
+  }
+
+  // Emit mode_change event if mode transitioned
+  if (previousMode !== state.modeState.activeMode && options?.agentId) {
+    const event = createModeChangeEvent(
+      options.agentId,
+      previousMode,
+      state.modeState.activeMode,
+      { conversationId: options.conversationId },
+    );
+    state.turnEvents.push(event);
   }
 
   // 3. Compile EIM context
@@ -140,7 +166,18 @@ export function preTurnHook(
     preferredModel: options?.preferredModel,
   });
 
-  // 6. Build context sections
+  // Store model selection on state (informational)
+  state.modelSelection = {
+    model: modelResult.model.id,
+    reason: modelResult.reason,
+  };
+
+  // 6. Compute context budget (informational)
+  state.contextBudget = calculateBudget(
+    modelResult.model.capabilities.contextWindow,
+  );
+
+  // 7. Build context sections
   const contextSections = {
     identity: [
       eimFragments.styleDirective,
@@ -412,4 +449,116 @@ export function clearOperationMode(state: LanternRuntimeState): OperationMode {
  */
 export function getCurrentMode(state: LanternRuntimeState): OperationMode {
   return state.modeState.activeMode;
+}
+
+// ============================================================================
+// Event Collection
+// ============================================================================
+
+/**
+ * Collect an event into the turn's event buffer.
+ * Events are flushed to the audit log on end_turn.
+ */
+export function collectEvent(
+  state: LanternRuntimeState,
+  event: AgentEvent,
+): void {
+  state.turnEvents.push(event);
+}
+
+/**
+ * Flush collected turn events to the audit log and clear the buffer.
+ * Called after end_turn. Returns the number of events flushed.
+ */
+export function flushTurnEvents(state: LanternRuntimeState): number {
+  const count = state.turnEvents.length;
+  // Events are already created with proper timestamps — the audit log
+  // is in-memory, so we just log a summary audit entry for the batch.
+  if (count > 0) {
+    logAuditEvent({
+      action: "tool_execute",
+      actor: "system",
+      target: "lantern_shell",
+      result: "allowed",
+      requiredLevel: "none",
+      reason: `Flushed ${count} Lantern Shell events from turn ${state.turnCount}`,
+      severity: "info",
+      metadata: {
+        eventCount: count,
+        eventTypes: state.turnEvents.map((e) => e.type),
+      },
+    });
+    state.turnEvents = [];
+  }
+  return count;
+}
+
+// ============================================================================
+// Status Reporting
+// ============================================================================
+
+/**
+ * Get a human-readable status summary of the Lantern Shell state.
+ * Used by the /lantern command.
+ */
+export function getLanternStatus(state: LanternRuntimeState): string {
+  const lines: string[] = [];
+
+  lines.push("Lantern Shell Status");
+  lines.push("====================");
+  lines.push("");
+  lines.push(`Mode:          ${state.modeState.activeMode}`);
+  lines.push(`Mode reason:   ${state.modeState.enterReason}`);
+  lines.push(`Previous mode: ${state.modeState.previousMode ?? "(none)"}`);
+  lines.push(`Task kind:     ${state.currentTaskKind}`);
+  lines.push(`Turn count:    ${state.turnCount}`);
+  lines.push(
+    `Context:       ${state.contextCompiled ? "compiled" : "not compiled"}`,
+  );
+
+  if (state.modelSelection) {
+    lines.push(`Model:         ${state.modelSelection.model}`);
+    lines.push(`Model reason:  ${state.modelSelection.reason}`);
+  } else {
+    lines.push("Model:         (not yet selected)");
+  }
+
+  if (state.contextBudget) {
+    lines.push(
+      `Budget total:  ${state.contextBudget.totalTokens.toLocaleString()} tokens`,
+    );
+    lines.push(
+      `  identity:    ${state.contextBudget.identityBudget.toLocaleString()}`,
+    );
+    lines.push(
+      `  memory:      ${state.contextBudget.memoryBudget.toLocaleString()}`,
+    );
+    lines.push(
+      `  conversation:${state.contextBudget.conversationBudget.toLocaleString()}`,
+    );
+    lines.push(
+      `  tools:       ${state.contextBudget.toolBudget.toLocaleString()}`,
+    );
+  } else {
+    lines.push("Budget:        (not yet computed)");
+  }
+
+  const pipelineCount = state.lastPipelineResults.length;
+  if (pipelineCount > 0) {
+    const queued = state.lastPipelineResults.filter(
+      (r) => r.decision === "queued",
+    ).length;
+    const approved = state.lastPipelineResults.filter(
+      (r) => r.decision === "approved",
+    ).length;
+    lines.push(
+      `Pipeline:      ${pipelineCount} candidates (${approved} approved, ${queued} queued)`,
+    );
+  } else {
+    lines.push("Pipeline:      no candidates from last turn");
+  }
+
+  lines.push(`Events:        ${state.turnEvents.length} collected this turn`);
+
+  return lines.join("\n");
 }

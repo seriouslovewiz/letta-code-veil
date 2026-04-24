@@ -18,7 +18,21 @@ export {
   renderMemoryRetrievalHint,
   renderStyleDirective,
 } from "./compiler";
+export {
+  invalidateAllEIMConfigCaches,
+  invalidateEIMConfigCache,
+  loadEIMConfig,
+} from "./loader";
 export { deserializeEIMConfig, serializeEIMConfig } from "./serializer";
+export type {
+  CompileEIMTurnContextOptions,
+  EIMContextPart,
+} from "./turnIntegration";
+export {
+  classifyTask as classifyEIMTask,
+  compileEIMTurnContext,
+  prependEIMContext,
+} from "./turnIntegration";
 export type {
   ContinuityPriority,
   EIMBoundaries,

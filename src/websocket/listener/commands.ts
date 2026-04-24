@@ -39,6 +39,8 @@ export const SUPPORTED_REMOTE_COMMANDS: readonly string[] = [
   "remember",
   "channels",
   "toolset",
+  "eim",
+  "lantern",
 ];
 
 /**
@@ -112,6 +114,14 @@ export async function handleExecuteCommand(
           trimmedArgs,
           opts,
         );
+        break;
+
+      case "eim":
+        output = await handleEIMCommand(conversationRuntime, trimmedArgs);
+        break;
+
+      case "lantern":
+        output = await handleLanternCommand(conversationRuntime);
         break;
 
       default:
@@ -535,4 +545,73 @@ async function handleChannelsCommand(
   }
 
   return "Usage: /channels <telegram|status>";
+}
+
+/**
+ * /eim — Manage EIM (Emulated Identity Model) context injection.
+ *
+ * Subcommands:
+ *   /eim status    — show current EIM status
+ *   /eim enable    — enable EIM context injection
+ *   /eim disable   — disable EIM context injection
+ */
+async function handleEIMCommand(
+  conversationRuntime: ConversationRuntime,
+  args: string | undefined,
+): Promise<string> {
+  const parts = (args ?? "").trim().split(/\s+/);
+  const subcommand = parts[0] || "help";
+  const agentId = conversationRuntime.agentId;
+
+  if (!agentId) {
+    return "Error: No agent ID in current context.";
+  }
+
+  if (subcommand === "help" || !subcommand) {
+    return [
+      "/eim help",
+      "",
+      "Manage EIM (Emulated Identity Model) context injection.",
+      "",
+      "USAGE",
+      "  /eim status    — show current EIM status",
+      "  /eim enable    — enable EIM context injection",
+      "  /eim disable   — disable EIM context injection",
+      "  /eim help      — show this help",
+    ].join("\n");
+  }
+
+  if (subcommand === "status") {
+    const enabled = settingsManager.isEIMEnabled(agentId);
+    return enabled
+      ? "EIM context injection is enabled.\nTask-aware identity directives will be injected before each user message."
+      : "EIM context injection is disabled.\nRun `/eim enable` to enable.";
+  }
+
+  if (subcommand === "enable") {
+    settingsManager.setEIMEnabled(agentId, true);
+    return "EIM context injection enabled.\nTask-aware identity directives will be injected before each user message.";
+  }
+
+  if (subcommand === "disable") {
+    settingsManager.setEIMEnabled(agentId, false);
+    return "EIM context injection disabled.";
+  }
+
+  return `Unknown subcommand: "${subcommand}". Run /eim help for usage.`;
+}
+
+/**
+ * /lantern — Show Lantern Shell status (mode, model, budget, pipeline).
+ */
+async function handleLanternCommand(
+  conversationRuntime: ConversationRuntime,
+): Promise<string> {
+  const state = conversationRuntime.lanternState;
+  if (!state) {
+    return "Lantern Shell is not active. Enable EIM first with /eim enable.";
+  }
+
+  const { getLanternStatus } = await import("../../agent/integration");
+  return getLanternStatus(state);
 }
