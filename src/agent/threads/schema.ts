@@ -286,3 +286,38 @@ export function surfaceThreads(
     summary: lines.length > 0 ? lines.join("\n") : "",
   };
 }
+
+// ============================================================================
+// Compact Formatting
+// ============================================================================
+
+/**
+ * Format a single thread as a compact one-liner for context injection.
+ * Includes ID for reference, age in hours, and stall indicator.
+ *
+ * Example: `[maya-eim] Help Maya write her EIM (active, 6h, blocker: waiting)`
+ */
+export function formatThreadBrief(thread: ThreadEntry): string {
+  const ageMs = Date.now() - new Date(thread.created).getTime();
+  const ageH = Math.round(ageMs / 3_600_000);
+  const stall =
+    thread.stallCount > 0
+      ? `, stalled ${thread.stallCount}/${STALL_THRESHOLD}`
+      : "";
+  const blocker = thread.blocker ? `, blocker: ${thread.blocker}` : "";
+  return `[${thread.id}] ${thread.title} (${thread.status}, ${ageH}h${stall}${blocker})`;
+}
+
+/**
+ * Format all surfaced threads as compact briefs — one line per thread.
+ * Useful for tight context windows where the full summary is too verbose.
+ */
+export function formatThreadsCompact(result: ThreadSurfacingResult): string {
+  const all = [
+    ...result.activeThreads,
+    ...result.parkedThreads,
+    ...result.stalledThreads,
+  ];
+  if (all.length === 0) return "";
+  return all.map(formatThreadBrief).join("\n");
+}

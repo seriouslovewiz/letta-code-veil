@@ -6,6 +6,8 @@ import { describe, expect, it } from "bun:test";
 import {
   closeThread,
   createThread,
+  formatThreadBrief,
+  formatThreadsCompact,
   incrementStall,
   parkThread,
   STALL_THRESHOLD,
@@ -246,5 +248,65 @@ describe("reflection integration", () => {
     const stalledPattern = patterns.find((p) => p.kind === "thread_stalled");
 
     expect(stalledPattern).toBeUndefined();
+  });
+});
+
+// ============================================================================
+// Compact Formatting
+// ============================================================================
+
+describe("compact thread formatting", () => {
+  it("formats an active thread as a one-liner with ID, status, age, no blocker", () => {
+    const thread = createThread(
+      "test-id",
+      "Test Thread",
+      ["coding"],
+      "Working",
+    );
+    const brief = formatThreadBrief(thread);
+
+    expect(brief).toContain("[test-id]");
+    expect(brief).toContain("Test Thread");
+    expect(brief).toContain("active");
+    expect(brief).toContain("h)"); // age in hours
+    expect(brief).not.toContain("blocker");
+  });
+
+  it("includes blocker when present", () => {
+    const thread = parkThread(
+      createThread("test", "Test", ["coding"], "Working"),
+      "Waiting for upstream",
+    );
+    const brief = formatThreadBrief(thread);
+
+    expect(brief).toContain("blocker: Waiting for upstream");
+  });
+
+  it("includes stall count when > 0", () => {
+    const thread = incrementStall(
+      createThread("test", "Test", ["coding"], "Working"),
+    );
+    const brief = formatThreadBrief(thread);
+
+    expect(brief).toContain("stalled 1/3");
+  });
+
+  it("formatThreadsCompact returns empty string for no threads", () => {
+    const result = surfaceThreads([], "coding");
+    expect(formatThreadsCompact(result)).toBe("");
+  });
+
+  it("formatThreadsCompact returns one line per thread", () => {
+    const threads: ThreadEntry[] = [
+      createThread("a", "Thread A", ["coding"], "Working"),
+      createThread("b", "Thread B", ["coding"], "Also working"),
+    ];
+    const result = surfaceThreads(threads, "coding");
+    const compact = formatThreadsCompact(result);
+
+    const lines = compact.split("\n");
+    expect(lines.length).toBe(2);
+    expect(lines[0]).toContain("[a]");
+    expect(lines[1]).toContain("[b]");
   });
 });
