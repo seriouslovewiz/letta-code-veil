@@ -22,7 +22,7 @@ import type {
   MemoryQueryResult,
   RetrievedMemory,
 } from "./continuity-schema";
-import { TASK_MEMORY_PRIORITY } from "./taxonomy";
+import { MEMORY_TYPE_DIRECTORIES, TASK_MEMORY_PRIORITY } from "./taxonomy";
 
 // ============================================================================
 // Index Management
@@ -68,7 +68,10 @@ export function rebuildMemoryIndex(memoryRoot: string): MemoryIndex {
 
   // Scan each type directory
   for (const type of Object.keys(index.byType)) {
-    const typeDir = join(memoryRoot, type);
+    const dirName =
+      MEMORY_TYPE_DIRECTORIES[type as keyof typeof MEMORY_TYPE_DIRECTORIES] ||
+      type;
+    const typeDir = join(memoryRoot, dirName);
     if (!existsSync(typeDir)) continue;
 
     const files = readdirSync(typeDir).filter((f) => f.endsWith(".md"));
@@ -76,7 +79,7 @@ export function rebuildMemoryIndex(memoryRoot: string): MemoryIndex {
       const filePath = join(typeDir, file);
       try {
         const content = readFileSync(filePath, "utf-8");
-        const entry = parseMemoryFile(content, `${type}/${file}`);
+        const entry = parseMemoryFile(content, `${dirName}/${file}`);
         if (!entry) continue;
 
         const indexEntry: MemoryIndexEntry = {

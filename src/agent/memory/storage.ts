@@ -28,6 +28,7 @@ import type { MemoryImportance, MemorySensitivity } from "./taxonomy";
 import {
   DEFAULT_IMPORTANCE_BY_TYPE,
   DEFAULT_SENSITIVITY_BY_TYPE,
+  MEMORY_TYPE_DIRECTORIES,
 } from "./taxonomy";
 
 // ============================================================================
@@ -191,7 +192,7 @@ function pipelineResultToEntry(
   return {
     frontmatter,
     content: result.candidate.content,
-    path: `${result.classification.type}/${id}.md`,
+    path: `${MEMORY_TYPE_DIRECTORIES[result.classification.type] || result.classification.type}/${id}.md`,
   };
 }
 

@@ -5078,6 +5078,42 @@ export default function App({
               return;
             }
 
+            // Post-turn continuity core: persist memory candidates
+            if (agentId && settingsManager.isEIMEnabled(agentId)) {
+              try {
+                const { postTurnHook: lanternPostTurn } = await import(
+                  "../agent/integration"
+                );
+                const { createInitialRuntimeState } = await import(
+                  "../agent/integration"
+                );
+                // Use a lightweight runtime state for the pipeline
+                const runtimeState = createInitialRuntimeState();
+                const result = lanternPostTurn(
+                  {
+                    conversationId: conversationIdRef.current ?? undefined,
+                    turnNumber: 0,
+                    assistantMessage,
+                    userMessage,
+                    agentId,
+                  },
+                  runtimeState,
+                  { persist: true },
+                );
+                if (
+                  result.storageResult &&
+                  result.storageResult.stored.length > 0
+                ) {
+                  debugLog(
+                    "continuity",
+                    `Persisted ${result.storageResult.stored.length} memories`,
+                  );
+                }
+              } catch (err) {
+                debugWarn("continuity", "Post-turn persistence failed:", err);
+              }
+            }
+
             // Disable eager approval check after first successful message (LET-7101)
             // Any new approvals from here on are from our own turn, not orphaned
             if (needsEagerApprovalCheck) {
@@ -11095,6 +11131,36 @@ ${SYSTEM_REMINDER_CLOSE}
           }
         } catch (err) {
           debugWarn("EIM", "Failed to inject EIM context:", err);
+        }
+      }
+
+      // Continuity core: retrieve relevant memories for this turn
+      if (settingsManager.isReady && settingsManager.isEIMEnabled(agentId)) {
+        try {
+          const { retrieveMemoriesForTurn } = await import(
+            "../agent/memory/storage"
+          );
+          const { classifyTask } = await import("../agent/context/compiler");
+          const taskKind = classifyTask(userTextForInput);
+          const memories = retrieveMemoriesForTurn(taskKind, agentId, {
+            limit: 5,
+          });
+          if (memories.length > 0) {
+            const memoryBlock = memories
+              .map((m) => `[${m.frontmatter.type}] ${m.content}`)
+              .join("\n");
+            const { SYSTEM_REMINDER_OPEN, SYSTEM_REMINDER_CLOSE } =
+              await import("../constants");
+            pushReminder(
+              `${SYSTEM_REMINDER_OPEN}\nRetrieved memories:\n${memoryBlock}\n${SYSTEM_REMINDER_CLOSE}`,
+            );
+            debugLog(
+              "continuity",
+              `Retrieved ${memories.length} memories for taskKind=${taskKind}`,
+            );
+          }
+        } catch (err) {
+          debugWarn("continuity", "Memory retrieval failed:", err);
         }
       }
 
