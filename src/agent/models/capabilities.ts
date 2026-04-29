@@ -112,7 +112,7 @@ export function inferCapabilities(
   },
 ): ModelCapabilities {
   const provider = handle.split("/")[0]?.toLowerCase() ?? "";
-  const model = handle.split("/")[1]?.toLowerCase() ?? "";
+  const _model = handle.split("/")[1]?.toLowerCase() ?? "";
 
   // Base capabilities from metadata
   const contextWindow = metadata?.context_window ?? 128000;
@@ -479,11 +479,27 @@ export function initializeDefaultModels(): void {
       description:
         "Alibaba Qwen 3.5 4B — strong reasoning/coding, 262K context, local inference via llama.cpp",
       free: true,
-      isDefault: true,
       capabilities: {
         contextWindow: 262144,
         maxOutputTokens: 8192,
         codeQuality: "excellent",
+        reasoning: "extended",
+        speed: "fast",
+        cost: "low",
+      },
+    },
+    {
+      id: "qwen3-8b",
+      handle: "openai-proxy/Qwen3-8B-Q5_K_M.gguf",
+      label: "Qwen3 8B (local)",
+      description:
+        "Alibaba Qwen3 8B — strong reasoning, 32K context, local inference via llama.cpp on GTX 1080",
+      free: true,
+      isDefault: true,
+      capabilities: {
+        contextWindow: 32000,
+        maxOutputTokens: 8192,
+        codeQuality: "good",
         reasoning: "extended",
         speed: "fast",
         cost: "low",

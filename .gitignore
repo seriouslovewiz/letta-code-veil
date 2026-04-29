@@ -157,3 +157,6 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 __pycache__/
+appimage-squash/
+letta-code-veil.AppImage
+seri_inst.txt

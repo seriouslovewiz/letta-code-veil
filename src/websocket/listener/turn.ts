@@ -649,9 +649,12 @@ export async function handleIncomingMessage(
           runtime.lanternState.turnCount++;
           runtime.lanternState.contextCompiled = true;
 
-          // Compute model selection and context budget (informational)
+          // Compute model selection and context budget
+          // Authoritative routing: update the conversation's model if the
+          // router selects a different model than what's currently active.
           try {
-            const { routeModel } = await import("../../agent/models/router");
+            const { routeModel, updateModelHealth } =
+              await import("../../agent/models/router");
             const { calculateBudget } = await import(
               "../../agent/context/compiler"
             );
@@ -665,6 +668,43 @@ export async function handleIncomingMessage(
             runtime.lanternState.contextBudget = calculateBudget(
               modelResult.model.capabilities.contextWindow,
             );
+
+            // Authoritative model routing: switch the conversation's model
+            // if the router selected a different one than what's active.
+            const selectedHandle = modelResult.model.handle;
+            const currentModel = runtime.lanternState.activeModelHandle;
+            if (selectedHandle && selectedHandle !== currentModel) {
+              try {
+                const { updateConversationLLMConfig } = await import(
+                  "../../agent/modify"
+                );
+                await updateConversationLLMConfig(
+                  conversationId,
+                  selectedHandle,
+                );
+                runtime.lanternState.activeModelHandle = selectedHandle;
+                if (isDebugEnabled()) {
+                  console.debug(
+                    `[Listen] Model routing: switched conversation ${conversationId} from ${currentModel || "default"} to ${selectedHandle} (reason: ${modelResult.reason})`,
+                  );
+                }
+              } catch (routeErr) {
+                // Model switch failed — mark model as degraded and continue
+                // with the current model rather than blocking the turn
+                updateModelHealth(modelResult.model.id, "degraded", {
+                  errorMessage:
+                    routeErr instanceof Error
+                      ? routeErr.message
+                      : String(routeErr),
+                });
+                if (isDebugEnabled()) {
+                  console.warn(
+                    `[Listen] Model routing: failed to switch to ${selectedHandle}, continuing with current model`,
+                    routeErr,
+                  );
+                }
+              }
+            }
           } catch {
             // Model selection is best-effort
           }
@@ -1131,6 +1171,61 @@ export async function handleIncomingMessage(
           errorDetail,
         );
         if (retriable && llmApiErrorRetries < LLM_API_ERROR_MAX_RETRIES) {
+          // Lantern Shell: on auth/credit errors, mark model unhealthy and
+          // attempt fallback to the next model in the chain before retrying.
+          if (runtime.lanternState?.activeModelHandle) {
+            const isAuthError =
+              errorDetail?.includes("UNAUTHENTICATED") ||
+              errorDetail?.includes("Authentication failed") ||
+              errorDetail?.includes("credit balance is too low") ||
+              errorDetail?.includes("invalid_api_key") ||
+              errorDetail?.includes("Incorrect API key");
+            if (isAuthError) {
+              try {
+                const { updateModelHealth, getModel, getModelChain } =
+                  await import("../../agent/models/router");
+                const currentHandle =
+                  runtime.lanternState.activeModelHandle;
+                const currentModel = getModel(currentHandle);
+                if (currentModel) {
+                  updateModelHealth(currentModel.id, "unhealthy", {
+                    errorMessage: errorDetail ?? "Authentication/credit error",
+                  });
+                  // Find a healthy fallback
+                  const chain = getModelChain(
+                    runtime.lanternState.currentTaskKind ?? "casual",
+                  );
+                  const healthyFallback = chain.find(
+                    (m) =>
+                      m.handle !== currentHandle &&
+                      m.capabilities.cost === "low",
+                  );
+                  if (healthyFallback) {
+                    try {
+                      const { updateConversationLLMConfig } = await import(
+                        "../../agent/modify"
+                      );
+                      await updateConversationLLMConfig(
+                        conversationId,
+                        healthyFallback.handle,
+                      );
+                      runtime.lanternState.activeModelHandle =
+                        healthyFallback.handle;
+                      if (isDebugEnabled()) {
+                        console.debug(
+                          `[Listen] Model fallback: ${currentHandle} → ${healthyFallback.handle} (auth error, using healthy fallback)`,
+                        );
+                      }
+                    } catch {
+                      // Fallback switch failed — continue retry with current model
+                    }
+                  }
+                }
+              } catch {
+                // Model fallback is best-effort
+              }
+            }
+          }
           llmApiErrorRetries += 1;
           const attempt = llmApiErrorRetries;
           const delayMs = getRetryDelayMs({

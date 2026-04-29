@@ -66,6 +66,8 @@ export interface LanternRuntimeState {
   };
   /** Context budget allocation from last pre-turn hook (informational) */
   contextBudget?: ContextBudget;
+  /** Currently active model handle (set by authoritative router) */
+  activeModelHandle?: string;
   /** Events collected during this turn (flushed to audit log on end_turn) */
   turnEvents: AgentEvent[];
   /** Turns since last reflection cycle (for throttling) */
