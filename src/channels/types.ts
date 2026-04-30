@@ -305,6 +305,14 @@ export interface TelegramChannelAccount extends ChannelAccountBase {
   binding: ChannelAccountBinding;
   /** When true and OPENAI_API_KEY is set, voice memos are auto-transcribed. */
   transcribeVoice?: boolean;
+  /** When true, receive updates via webhook instead of long-polling. */
+  webhookMode?: boolean;
+  /** Port for the webhook HTTP server (default 8443). */
+  webhookPort?: number;
+  /** Public URL for the Telegram webhook endpoint. */
+  webhookUrl?: string;
+  /** Secret token for webhook validation (X-Telegram-Bot-Api-Secret-Token). */
+  webhookSecretToken?: string;
 }
 
 export interface SlackChannelAccount extends ChannelAccountBase {

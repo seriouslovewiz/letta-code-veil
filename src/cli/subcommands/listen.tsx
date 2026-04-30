@@ -264,6 +264,9 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       "env-name": { type: "string" },
       channels: { type: "string" },
       "install-channel-runtimes": { type: "boolean" },
+      "telegram-webhook": { type: "boolean" },
+      "telegram-webhook-port": { type: "string" },
+      "telegram-webhook-url": { type: "string" },
       help: { type: "boolean", short: "h" },
       debug: { type: "boolean" },
     },
@@ -289,6 +292,15 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     );
     console.log(
       "  --install-channel-runtimes  Install missing runtime deps for the selected channels before startup",
+    );
+    console.log(
+      "  --telegram-webhook         Use webhook mode for Telegram (instead of long-polling)",
+    );
+    console.log(
+      "  --telegram-webhook-port    Port for Telegram webhook server (default: 8443)",
+    );
+    console.log(
+      "  --telegram-webhook-url     Public URL for Telegram webhook (e.g. https://tgbots.example.com)",
     );
     console.log(
       "  --debug            Plain-text mode: log all WebSocket events instead of interactive UI",
@@ -384,6 +396,29 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
 
     const { initializeChannels } = await import("../../channels/registry");
     await initializeChannels(channelNames);
+
+    // Inject webhook config from CLI flags into Telegram accounts
+    if (values["telegram-webhook"] && channelNames.includes("telegram")) {
+      const { listChannelAccounts, upsertChannelAccount } = await import(
+        "../../channels/accounts"
+      );
+      const accounts = listChannelAccounts("telegram");
+      for (const account of accounts) {
+        if (account.channel === "telegram") {
+          account.webhookMode = true;
+          if (values["telegram-webhook-port"]) {
+            account.webhookPort = parseInt(
+              values["telegram-webhook-port"] as string,
+              10,
+            );
+          }
+          if (values["telegram-webhook-url"]) {
+            account.webhookUrl = values["telegram-webhook-url"] as string;
+          }
+          upsertChannelAccount("telegram", account);
+        }
+      }
+    }
   }
 
   // Determine connection name

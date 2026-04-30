@@ -1,7 +1,8 @@
 /**
  * Telegram channel adapter using grammY.
  *
- * Uses long-polling (no webhook setup needed).
+ * Supports both long-polling (default) and webhook mode.
+ * In webhook mode, receives updates via HTTP POST instead of polling.
  */
 
 import type { ReactionType, ReactionTypeEmoji } from "@grammyjs/types";
@@ -189,6 +190,82 @@ function getTelegramReactionSenderId(
 
 function getTelegramChatType(chat: { type?: string }): "direct" | "channel" {
   return chat.type === "private" ? "direct" : "channel";
+}
+
+// ── Shared webhook server ──────────────────────────────────────────
+// Multiple Telegram accounts share a single HTTP server.
+// Each account registers its webhook handler at a unique path.
+
+let sharedWebhookServer: import("node:http").Server | null = null;
+let sharedWebhookPort: number | null = null;
+const webhookRoutes = new Map<
+  string,
+  (
+    req: import("node:http").IncomingMessage,
+    res: import("node:http").ServerResponse,
+  ) => void
+>();
+let sharedServerRefCount = 0;
+
+async function ensureWebhookServer(
+  port: number,
+): Promise<import("node:http").Server> {
+  if (sharedWebhookServer && sharedWebhookPort === port) {
+    return sharedWebhookServer;
+  }
+
+  if (sharedWebhookServer) {
+    // Port changed — close existing server
+    await new Promise<void>((resolve) => {
+      sharedWebhookServer?.close(() => resolve());
+    });
+    sharedWebhookServer = null;
+  }
+
+  const http = await import("node:http");
+  sharedWebhookServer = http.createServer((req, res) => {
+    const handler = webhookRoutes.get(req.url ?? "/");
+    if (handler && req.method === "POST") {
+      handler(req, res);
+      return;
+    }
+    if (req.method === "GET" && req.url === "/health") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(
+        JSON.stringify({
+          status: "ok",
+          mode: "webhook",
+          routes: webhookRoutes.size,
+        }),
+      );
+      return;
+    }
+    res.writeHead(404).end();
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    sharedWebhookServer?.listen(port, () => {
+      console.log(`[Telegram] Shared webhook server listening on :${port}`);
+      resolve();
+    });
+    sharedWebhookServer?.on("error", reject);
+  });
+
+  sharedWebhookPort = port;
+  return sharedWebhookServer;
+}
+
+async function closeWebhookServerIfUnused(): Promise<void> {
+  sharedServerRefCount--;
+  if (sharedServerRefCount <= 0 && sharedWebhookServer) {
+    await new Promise<void>((resolve) => {
+      sharedWebhookServer?.close(() => resolve());
+    });
+    sharedWebhookServer = null;
+    sharedWebhookPort = null;
+    webhookRoutes.clear();
+    sharedServerRefCount = 0;
+  }
 }
 
 export function createTelegramAdapter(
@@ -416,36 +493,88 @@ export function createTelegramAdapter(
 
       await telegramBot.init();
       const info = telegramBot.botInfo;
-      console.log(
-        `[Telegram] Bot started as @${info.username} (dm_policy: ${config.dmPolicy})`,
-      );
 
-      await new Promise<void>((resolve, reject) => {
-        let started = false;
+      if (config.webhookMode) {
+        // ── Webhook mode ──────────────────────────────────────────
+        const grammy = await ensureModule();
+        const webhookCallback = grammy.webhookCallback;
+        if (!webhookCallback) {
+          throw new Error(
+            "[Telegram] webhookCallback not available in grammY module",
+          );
+        }
 
-        void telegramBot
-          .start({
+        const port = config.webhookPort ?? 8443;
+        const webhookPath = `/webhook/telegram/${config.accountId}`;
+        const secretToken = config.webhookSecretToken;
+
+        // Create native http handler via grammY
+        const handler = webhookCallback(
+          telegramBot,
+          "http",
+          undefined,
+          undefined,
+          secretToken,
+        );
+
+        // Register this bot's handler on the shared webhook server
+        webhookRoutes.set(webhookPath, handler);
+        await ensureWebhookServer(port);
+        sharedServerRefCount++;
+
+        console.log(`[Telegram] Webhook route: POST ${webhookPath}`);
+
+        // Register webhook with Telegram
+        if (config.webhookUrl) {
+          const fullUrl = `${config.webhookUrl}${webhookPath}`;
+          await telegramBot.api.setWebhook(fullUrl, {
             allowed_updates: ["message", "message_reaction"],
-            onStart: () => {
-              running = true;
-              started = true;
-              resolve();
-            },
-          })
-          .catch((error) => {
-            running = false;
-
-            if (!started) {
-              reject(error);
-              return;
-            }
-
-            console.error(
-              "[Telegram] Long-polling stopped unexpectedly:",
-              error,
-            );
+            secret_token: secretToken,
           });
-      });
+          console.log(`[Telegram] Webhook registered: ${fullUrl}`);
+        } else {
+          console.warn(
+            "[Telegram] webhookUrl not set — register manually via Bot API",
+          );
+        }
+
+        running = true;
+        console.log(
+          `[Telegram] Bot started as @${info.username} (webhook, dm_policy: ${config.dmPolicy})`,
+        );
+      } else {
+        // ── Long-polling mode (default) ───────────────────────────
+        console.log(
+          `[Telegram] Bot started as @${info.username} (dm_policy: ${config.dmPolicy})`,
+        );
+
+        await new Promise<void>((resolve, reject) => {
+          let started = false;
+
+          void telegramBot
+            .start({
+              allowed_updates: ["message", "message_reaction"],
+              onStart: () => {
+                running = true;
+                started = true;
+                resolve();
+              },
+            })
+            .catch((error) => {
+              running = false;
+
+              if (!started) {
+                reject(error);
+                return;
+              }
+
+              console.error(
+                "[Telegram] Long-polling stopped unexpectedly:",
+                error,
+              );
+            });
+        });
+      }
     },
 
     async stop(): Promise<void> {
@@ -454,10 +583,27 @@ export function createTelegramAdapter(
       }
       bufferedMediaGroups.clear();
 
-      if (!running || !bot) return;
-      await bot.stop();
+      if (!running) return;
+
+      if (config.webhookMode) {
+        // Delete webhook so Telegram stops sending updates
+        if (bot) {
+          await bot.api.deleteWebhook().catch(() => {});
+        }
+        // Unregister route from shared server
+        const webhookPath = `/webhook/telegram/${config.accountId}`;
+        webhookRoutes.delete(webhookPath);
+        await closeWebhookServerIfUnused();
+      } else {
+        if (bot) {
+          await bot.stop();
+        }
+      }
+
       running = false;
-      console.log("[Telegram] Bot stopped");
+      console.log(
+        `[Telegram] Bot stopped (${config.webhookMode ? "webhook" : "long-polling"})`,
+      );
     },
 
     isRunning(): boolean {
