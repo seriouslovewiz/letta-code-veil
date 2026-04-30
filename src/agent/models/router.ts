@@ -16,6 +16,7 @@ import {
   type ModelEntry,
   type ModelSelection,
   selectModel,
+  setModelAvailability,
   type TaskRequirements,
 } from "./capabilities";
 
@@ -284,6 +285,12 @@ export function updateModelHealth(
     errorRate: options?.errorRate,
     errorMessage: options?.errorMessage,
   });
+
+  // Mark model as unavailable for routing when degraded/unhealthy
+  // (e.g., credit errors, auth failures)
+  if (status === "degraded" || status === "unhealthy") {
+    setModelAvailability(modelId, false);
+  }
 }
 
 /**

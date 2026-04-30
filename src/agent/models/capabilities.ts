@@ -80,6 +80,8 @@ export interface ModelEntry {
   free?: boolean;
   /** Whether this is a featured model */
   isFeatured?: boolean;
+  /** Whether this model is available for routing (respects plan/credits) */
+  available?: boolean;
 }
 
 /**
@@ -216,6 +218,20 @@ export function getDefaultModels(): ModelEntry[] {
   return getAllModels().filter((m) => m.isDefault || m.isFeatured);
 }
 
+/**
+ * Set availability for a model by ID or handle.
+ * Models marked unavailable are skipped during routing.
+ */
+export function setModelAvailability(
+  identifier: string,
+  available: boolean,
+): void {
+  const entry = modelRegistry.get(identifier);
+  if (entry) {
+    entry.available = available;
+  }
+}
+
 // ============================================================================
 // Model Selection
 // ============================================================================
@@ -339,6 +355,9 @@ export function selectModel(
     [];
 
   for (const model of models) {
+    // Skip models explicitly marked as unavailable
+    if (model.available === false) continue;
+
     const result = scoreModel(model, requirements);
     if (result.score > 0) {
       scored.push({ model, ...result });
@@ -371,6 +390,7 @@ export function getFallbackChain(
 
   const models = getAllModels()
     .filter((m) => m.id !== primary.id && m.handle !== primary.handle)
+    .filter((m) => m.available !== false)
     .map((model) => ({ model, ...scoreModel(model, requirements) }))
     .filter((s) => s.score > 0)
     .sort((a, b) => b.score - a.score)

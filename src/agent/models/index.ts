@@ -20,6 +20,7 @@ export {
   initializeDefaultModels,
   registerModel,
   selectModel,
+  setModelAvailability,
 } from "./capabilities";
 
 export type {
