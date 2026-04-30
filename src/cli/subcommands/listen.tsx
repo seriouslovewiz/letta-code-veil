@@ -264,6 +264,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       "env-name": { type: "string" },
       channels: { type: "string" },
       "install-channel-runtimes": { type: "boolean" },
+      agent: { type: "string" },
       "telegram-webhook": { type: "boolean" },
       "telegram-webhook-port": { type: "string" },
       "telegram-webhook-url": { type: "string" },
@@ -292,6 +293,9 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     );
     console.log(
       "  --install-channel-runtimes  Install missing runtime deps for the selected channels before startup",
+    );
+    console.log(
+      "  --agent <id>                Only start channel accounts bound to this agent (filters accounts.json)",
     );
     console.log(
       "  --telegram-webhook         Use webhook mode for Telegram (instead of long-polling)",
@@ -395,7 +399,8 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     }
 
     const { initializeChannels } = await import("../../channels/registry");
-    await initializeChannels(channelNames);
+    const agentFilter = values.agent ? (values.agent as string) : undefined;
+    await initializeChannels(channelNames, agentFilter);
 
     // Inject webhook config from CLI flags into Telegram accounts
     if (values["telegram-webhook"] && channelNames.includes("telegram")) {
@@ -405,6 +410,13 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       const accounts = listChannelAccounts("telegram");
       for (const account of accounts) {
         if (account.channel === "telegram") {
+          // Skip accounts not matching the agent filter
+          if (agentFilter) {
+            const binding = (account as any).binding;
+            if (binding?.agentId && binding.agentId !== agentFilter) {
+              continue;
+            }
+          }
           account.webhookMode = true;
           if (values["telegram-webhook-port"]) {
             account.webhookPort = parseInt(

@@ -1122,6 +1122,7 @@ export class ChannelRegistry {
  */
 export async function initializeChannels(
   channelNames: string[],
+  agentFilter?: string,
 ): Promise<ChannelRegistry> {
   const registry = ensureChannelRegistry();
 
@@ -1138,6 +1139,17 @@ export async function initializeChannels(
     for (const account of accounts) {
       if (!account.enabled) {
         continue;
+      }
+
+      // If an agent filter is specified, only start accounts bound to that agent
+      if (agentFilter) {
+        const binding = (account as any).binding;
+        if (binding?.agentId && binding.agentId !== agentFilter) {
+          console.log(
+            `[Channels] Skipping ${channelId}/${account.accountId} (bound to ${binding.agentId}, filter: ${agentFilter})`,
+          );
+          continue;
+        }
       }
 
       try {
